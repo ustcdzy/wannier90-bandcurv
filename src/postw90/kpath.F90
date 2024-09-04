@@ -57,7 +57,7 @@ contains
       get_FF_R, get_SS_R, get_SHC_R
     use w90_spin, only: spin_get_nk
     use w90_berry, only: berry_get_imf_klist, berry_get_imfgh_klist, &
-      berry_get_shc_klist
+      berry_get_shc_klist, berry_get_imf_klist_kubo
     use w90_constants, only: bohr
 
     integer, dimension(0:num_nodes - 1) :: counts, displs
@@ -68,10 +68,11 @@ contains
     real(kind=dp)     :: ymin, ymax, kpt(3), spn_k(num_wann), &
                          imf_k_list(3, 3, nfermi), img_k_list(3, 3, nfermi), &
                          imh_k_list(3, 3, nfermi), Morb_k(3, 3), &
-                         range, zmin, zmax
+                         range, zmin, zmax, &
+                         imf_k_m_list(num_wann, 3, 3, nfermi)
     real(kind=dp)     :: shc_k_band(num_wann), shc_k_fermi(nfermi)
     real(kind=dp), allocatable, dimension(:) :: kpath_len
-    logical           :: plot_bands, plot_curv, plot_morb, plot_shc
+    logical           :: plot_bands, plot_curv, plot_morb, plot_shc, plot_curvsep
     character(len=120) :: file_name
 
     complex(kind=dp), allocatable :: HH(:, :)
@@ -81,7 +82,8 @@ contains
                                      morb(:, :), my_morb(:, :), &
                                      color(:, :), my_color(:, :), &
                                      plot_kpoint(:, :), my_plot_kpoint(:, :), &
-                                     shc(:), my_shc(:)
+                                     shc(:), my_shc(:), &
+                                     curvsep(:, :, :), my_curvsep(:, :, :)
     character(len=3), allocatable  :: glabel(:)
 
     ! Everything is done on the root node (not worthwhile parallelizing)
@@ -92,6 +94,7 @@ contains
     plot_curv = index(kpath_task, 'curv') > 0
     plot_morb = index(kpath_task, 'morb') > 0
     plot_shc = index(kpath_task, 'shc') > 0
+    plot_curvsep = index(kpath_task, 'curvsep') > 0
 
     if (on_root) then
       if (plot_shc .or. (plot_bands .and. kpath_bands_colour == 'shc')) then
@@ -114,7 +117,7 @@ contains
 
     ! Set up the needed Wannier matrix elements
     call get_HH_R
-    if (plot_curv .or. plot_morb) call get_AA_R
+    if (plot_curv .or. plot_morb .or. plot_curvsep) call get_AA_R
     if (plot_morb) then
       call get_BB_R
       call get_CC_R
@@ -168,6 +171,7 @@ contains
     if (plot_curv) allocate (my_curv(my_num_pts, 3))
     if (plot_morb) allocate (my_morb(my_num_pts, 3))
     if (plot_shc) allocate (my_shc(my_num_pts))
+    if (plot_curvsep) allocate (my_curvsep(my_num_pts, num_wann, 3))
 
     ! Loop over local junk of k-points on the path and evaluate the requested quantities
     !
@@ -221,6 +225,17 @@ contains
         my_curv(loop_kpt, 3) = sum(imf_k_list(:, 3, 1))
       end if
 
+      if (plot_curvsep) then
+        if (.not. plot_morb) then
+          call berry_get_imf_klist_kubo(kpt, imf_k_m_list)
+        end if
+        do n = 1, num_wann
+        my_curvsep(loop_kpt, n, 1) = sum(imf_k_m_list(n, :, 1, 1))
+        my_curvsep(loop_kpt, n, 2) = sum(imf_k_m_list(n, :, 2, 1))
+        my_curvsep(loop_kpt, n, 3) = sum(imf_k_m_list(n, :, 3, 1))
+        end do
+      endif
+
       if (plot_shc) then
         call berry_get_shc_klist(kpt, shc_k_fermi=shc_k_fermi)
         my_shc(loop_kpt) = shc_k_fermi(1)
@@ -244,6 +259,16 @@ contains
       do i = 1, 3
         call comms_gatherv(my_curv(:, i), my_num_pts, &
                            curv(:, i), counts, displs)
+      end do
+    end if
+
+    if (plot_curvsep) then
+      allocate (curvsep(total_pts, num_wann, 3))
+      do i = 1, 3
+        do j = 1, num_wann
+          call comms_gatherv(my_curvsep(:, j, i), my_num_pts, &
+                             curvsep(:, j, i), counts, displs)
+        end do
       end do
     end if
 
@@ -280,6 +305,7 @@ contains
         close (dataunit)
       end if
       if (plot_curv .and. berry_curv_unit == 'bohr2') curv = curv/bohr**2
+      if (plot_curvsep .and. berry_curv_unit == 'bohr2') curvsep = curvsep/bohr**2
 
       if (plot_bands .and. kpath_bands_colour == 'shc') then
         if (berry_curv_unit == 'bohr2') color = color/bohr**2
@@ -329,7 +355,7 @@ contains
       end if
 
       if (plot_bands .and. .not. plot_curv .and. .not. plot_morb &
-          .and. .not. plot_shc) then
+          .and. .not. plot_shc ) then
         !
         ! Gnuplot script
         !
@@ -457,6 +483,21 @@ contains
         do loop_kpt = 1, total_pts
           write (dataunit, '(4E16.8)') xval(loop_kpt), &
             curv(loop_kpt, :)
+        end do
+        write (dataunit, *) ' '
+        close (dataunit)
+      end if
+
+      if (plot_curvsep) then
+        dataunit = io_file_unit()
+        file_name = trim(seedname)//'-curvsep.dat'
+        write (stdout, '(/,3x,a)') file_name
+        open (dataunit, file=file_nmae, form='formatted')
+        do i = 1, num_wann
+          do loop_kpt = 1, total_pts
+            write (dataunit, '(1I5,4E16.8)') i, xval(loop_kpt), &
+              curvsep(loop_kpt, i, :)
+          end do
         end do
         write (dataunit, *) ' '
         close (dataunit)
