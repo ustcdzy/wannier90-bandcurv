@@ -1170,7 +1170,7 @@ contains
       ('Error: berry=T and berry_task is not set')
     if (berry .and. index(berry_task, 'ahc') == 0 .and. index(berry_task, 'morb') == 0 &
         .and. index(berry_task, 'kubo') == 0 .and. index(berry_task, 'sc') == 0 &
-        .and. index(berry_task, 'shc') == 0 .and. index(berry_task, 'shg') == 0) call io_error &
+        .and. index(berry_task, 'shc') == 0) call io_error &
       ('Error: value of berry_task not recognised in param_read')
 
     ! Stepan
@@ -3238,12 +3238,6 @@ contains
         write (stdout, '(1x,a46,10x,a8,13x,a1)') '|  Compute Spin Hall Conductivity            :', '       T', '|'
       else
         write (stdout, '(1x,a46,10x,a8,13x,a1)') '|  Compute Spin Hall Conductivity            :', '       F', '|'
-      endif
-      if (index(berry_task, 'shg') > 0) then
-        write (stdout, '(1x,a46,10x,a8,13x,a1)') '|  Compute Second Harmonic Susceptibility    :', '       T', '|'
-        write (stdout, '(1x,a74,3x,a1)') '|    Attention: early development versions may have instability or errors!', '|'
-      else
-        write (stdout, '(1x,a46,10x,a8,13x,a1)') '|  Compute Second Harmonic Susceptibility    :', '       F', '|'
       endif
       write (stdout, '(1x,a46,10x,f8.3,13x,a1)') '|  Lower frequency for optical responses     :', kubo_freq_min, '|'
       write (stdout, '(1x,a46,10x,f8.3,13x,a1)') '|  Upper frequency for optical responses     :', kubo_freq_max, '|'

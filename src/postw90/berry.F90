@@ -84,7 +84,7 @@ contains
     !============================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, elem_charge_SI, hbar_SI, &
-      eV_au, bohr, pi, eV_seconds, eps0_SI
+      eV_au, bohr, pi, eV_seconds
     use w90_comms, only: on_root, num_nodes, my_node_id, comms_reduce
     use w90_io, only: io_error, stdout, io_file_unit, seedname, &
       io_stopwatch
@@ -147,23 +147,13 @@ contains
     ! for fermi energy scan, adaptive kmesh
     real(kind=dp), allocatable    :: shc_k_fermi_dummy(:)
 
-    ! SHG
-    complex(kind=dp), allocatable :: shg_inter_k(:, :, :)
-    complex(kind=dp), allocatable :: shg_inter(:, :, :)
-    complex(kind=dp), allocatable :: shg_intra_k(:, :, :)
-    complex(kind=dp), allocatable :: shg_intra(:, :, :)
-    complex(kind=dp), allocatable :: shg_modi_k(:, :, :)
-    complex(kind=dp), allocatable :: shg_modi(:, :, :)
-    complex(kind=dp), allocatable :: shg_tot_k(:, :, :)
-    complex(kind=dp), allocatable :: shg_tot(:, :, :)
-
     real(kind=dp)     :: kweight, kweight_adpt, kpt(3), kpt_ad(3), &
                          db1, db2, db3, fac, freq, rdum, vdum(3)
     integer           :: n, i, j, k, jk, ikpt, if, ispn, ierr, loop_x, loop_y, loop_z, &
                          loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
                          file_unit
     character(len=120) :: file_name
-    logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc, eval_shg
+    logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
     logical           :: ladpt_kmesh
     logical           :: ladpt(nfermi)
 
@@ -183,15 +173,11 @@ contains
     eval_kubo = .false.
     eval_sc = .false.
     eval_shc = .false.
-    eval_shg = .false.
-
     if (index(berry_task, 'ahc') > 0) eval_ahc = .true.
     if (index(berry_task, 'morb') > 0) eval_morb = .true.
     if (index(berry_task, 'kubo') > 0) eval_kubo = .true.
     if (index(berry_task, 'sc') > 0) eval_sc = .true.
     if (index(berry_task, 'shc') > 0) eval_shc = .true.
-    if (index(berry_task, 'shg') > 0) eval_shg = .true.
-
 
     ! Wannier matrix elements, allocations and initializations
     !
@@ -214,7 +200,7 @@ contains
 
     ! List here berry_tasks that assume nfermi=1
     !
-    not_scannable = eval_kubo .or. (eval_shc .and. shc_freq_scan) .or. eval_shg
+    not_scannable = eval_kubo .or. (eval_shc .and. shc_freq_scan)
     if (not_scannable .and. nfermi .ne. 1) call io_error( &
       'The berry_task(s) you chose require that you specify a single ' &
       //'Fermi energy: scanning the Fermi energy is not implemented')
@@ -277,27 +263,6 @@ contains
       endif
     endif
 
-    if (eval_shg) then
-      call get_HH_R
-      call get_AA_R
-      allocate (shg_inter_k(3, 6, kubo_nfreq))
-      allocate (shg_inter(3, 6, kubo_nfreq))
-      allocate (shg_intra_k(3, 6, kubo_nfreq))
-      allocate (shg_intra(3, 6, kubo_nfreq))
-      allocate (shg_modi_k(3, 6, kubo_nfreq))
-      allocate (shg_modi(3, 6, kubo_nfreq))
-      allocate (shg_tot_k(3, 6, kubo_nfreq))
-      allocate (shg_tot(3, 6, kubo_nfreq))
-      shg_inter_k = cmplx_0
-      shg_inter = cmplx_0
-      shg_intra_k = cmplx_0
-      shg_intra = cmplx_0
-      shg_modi_k = cmplx_0
-      shg_modi = cmplx_0
-      shg_tot_k = cmplx_0
-      shg_tot = cmplx_0
-    endif
-
     if (on_root) then
 
       write (stdout, '(/,/,1x,a)') &
@@ -332,10 +297,6 @@ contains
         else
           write (stdout, '(/,3x,a)') '  Fermi energy scan'
         endif
-      endif
-
-      if (eval_shg) then
-        write (stdout, '(/,3x,a)') '* Second Harmonic Generation'
       endif
 
       if (transl_inv) then
@@ -470,13 +431,6 @@ contains
           sc_list = sc_list + sc_k_list*kweight
         end if
 
-        if (eval_shg) then
-          call berry_get_shg_k(kpt, shg_inter_k, shg_intra_k, shg_modi_k)
-          shg_inter = shg_inter + shg_inter_k*kweight
-          shg_intra = shg_intra + shg_intra_k*kweight
-          shg_modi = shg_modi + shg_modi_k*kweight
-        endif
-
         !
         ! ***END COPY OF CODE BLOCK 1***
 
@@ -609,13 +563,6 @@ contains
           sc_list = sc_list + sc_k_list*kweight
         end if
 
-        if (eval_shg) then
-          call berry_get_shg_k(kpt, shg_inter_k, shg_intra_k, shg_modi_k)
-          shg_inter = shg_inter + shg_inter_k*kweight
-          shg_intra = shg_intra + shg_intra_k*kweight
-          shg_modi = shg_modi + shg_modi_k*kweight
-        endif
-
         !
         ! ***END CODE BLOCK 1***
 
@@ -708,12 +655,6 @@ contains
         call comms_reduce(adpt_counter_list(1), nfermi, 'SUM')
       end if
     end if
-
-    if (eval_shg) then
-      call comms_reduce(shg_inter(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-      call comms_reduce(shg_intra(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-      call comms_reduce(shg_modi(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-    endif
 
     if (on_root) then
 
@@ -1209,100 +1150,6 @@ contains
         endif
         close (file_unit)
 
-      endif
-
-      ! ---------------------------!
-      ! Second harmonic generation !
-      ! ---------------------------!
-      !
-      if (eval_shg) then
-        ! Inter-band
-        fac = 1.0e12_dp*eV_seconds**2*elem_charge_SI**3/(hbar_SI**(2)*cell_volume*eps0_SI)
-        shg_inter = shg_inter*fac
-        shg_intra = shg_intra*fac
-        shg_modi = shg_modi*fac
-        shg_tot = shg_inter + shg_intra + shg_modi
-        write (stdout, '(/,1x,a)') &
-        '----------------------------------------------------------'
-        write (stdout, '(1x,a)') &
-          'Output data files related to second harmonic generation:'
-        write (stdout, '(1x,a)') &
-          '--------------------------------------------------------'
-        ! Inter-band
-        do i = 1, 3
-          do jk = 1, 6
-            j = alpha_S(jk)
-            k = beta_S(jk)
-            file_name = trim(seedname)//'-shg-inter_'// &
-                        achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
-            file_name = trim(file_name)
-            file_unit = io_file_unit()
-            write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-            do ifreq = 1, kubo_nfreq
-              write (file_unit, '(3E16.8)') real(kubo_freq_list(ifreq), dp), &
-                real(shg_inter(i, jk, ifreq), dp), aimag(shg_inter(i, jk, ifreq))
-            enddo
-            close(file_unit)
-          enddo
-        enddo
-
-        ! Intra-band
-        do i = 1, 3
-          do jk = 1, 6
-            j = alpha_S(jk)
-            k = beta_S(jk)
-            file_name = trim(seedname)//'-shg-intra_'// &
-                        achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
-            file_name = trim(file_name)
-            file_unit = io_file_unit()
-            write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-            do ifreq = 1, kubo_nfreq
-              write (file_unit, '(3E16.8)') real(kubo_freq_list(ifreq), dp), &
-                real(shg_intra(i, jk, ifreq), dp), aimag(shg_intra(i, jk, ifreq))
-            enddo
-            close(file_unit)
-          enddo
-        enddo
-
-        ! Modification
-        do i = 1, 3
-          do jk = 1, 6
-            j = alpha_S(jk)
-            k = beta_S(jk)
-            file_name = trim(seedname)//'-shg-modi_'// &
-                        achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
-            file_name = trim(file_name)
-            file_unit = io_file_unit()
-            write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-            do ifreq = 1, kubo_nfreq
-              write (file_unit, '(3E16.8)') real(kubo_freq_list(ifreq), dp), &
-                real(shg_modi(i, jk, ifreq), dp), aimag(shg_modi(i, jk, ifreq))
-            enddo
-            close(file_unit)
-          enddo
-        enddo
-
-        ! Total
-        do i = 1, 3
-          do jk = 1, 6
-            j = alpha_S(jk)
-            k = beta_S(jk)
-            file_name = trim(seedname)//'-shg-tot_'// &
-                        achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
-            file_name = trim(file_name)
-            file_unit = io_file_unit()
-            write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-            do ifreq = 1, kubo_nfreq
-              write (file_unit, '(3E16.8)') real(kubo_freq_list(ifreq), dp), &
-                real(shg_tot(i, jk, ifreq), dp), aimag(shg_tot(i, jk, ifreq))
-            enddo
-            close(file_unit)
-          enddo
-        enddo
       endif
 
     end if !on_root
@@ -2186,353 +2033,6 @@ contains
     end subroutine berry_get_js_k
 
   end subroutine berry_get_shc_klist
-
-  subroutine berry_get_shg_k(kpt, shg_inter_k, shg_intra_k, shg_modi_k)
-    !====================================================================!
-    !                                                                    !
-    !  Contribution from point k to the shg
-    !  [integrand of Eq.8 IATS18]
-    !  Notation correspondence with IATS18:
-    !  AA_da_bar              <-->   \mathbbm{b}
-    !  AA_bar                 <-->   \mathbbm{a}
-    !  HH_dadb_bar            <-->   \mathbbm{w}
-    !  D_h(n,m)               <-->   \mathbbm{v}_{nm}/(E_{m}-E_{n})
-    !  sum_AD                 <-->   summatory of Eq. 32 IATS18
-    !  sum_HD                 <-->   summatory of Eq. 30 IATS18
-    !  eig_da(n)-eig_da(m)    <-->   \mathbbm{Delta}_{nm}
-    !                                                                    !
-    !====================================================================!
-
-    ! Arguments
-    !
-    use w90_constants, only: dp, cmplx_0, cmplx_i
-    use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec
-    use w90_parameters, only: num_wann, nfermi, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
-      kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
-      kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
-      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr
-    use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
-      pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
-      pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv
-    use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
-      wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
-      wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_get_oper, only: AA_R
-    use w90_utility, only: utility_rotate, utility_zdotu
-    ! Arguments
-    ! 
-    real(kind=dp), intent(in)                         :: kpt(3)
-    complex(kind=dp), intent(out), dimension(:, :, :)    :: shg_inter_k
-    complex(kind=dp), intent(out), dimension(:, :, :)    :: shg_intra_k
-    complex(kind=dp), intent(out), dimension(:, :, :)    :: shg_modi_k
-
-    complex(kind=dp), allocatable :: UU(:, :)
-    complex(kind=dp), allocatable :: AA(:, :, :), AA_bar(:, :, :)
-    complex(kind=dp), allocatable :: AA_da(:, :, :, :), AA_da_bar(:, :, :, :)
-    complex(kind=dp), allocatable :: HH_da(:, :, :), HH_da_bar(:, :, :)
-    complex(kind=dp), allocatable :: HH_dadb(:, :, :, :), HH_dadb_bar(:, :, :, :)
-    complex(kind=dp), allocatable :: HH(:, :)
-    complex(kind=dp), allocatable :: D_h(:, :, :)
-    complex(kind=dp), allocatable :: r(:, :, :)
-    complex(kind=dp), allocatable :: omega_o(:)
-    real(kind=dp), allocatable    :: eig(:)
-    real(kind=dp), allocatable    :: eig_da(:, :)
-    real(kind=dp), allocatable    :: occ(:)
-
-    complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3)
-    complex(kind=dp)              :: r_cubic(3, 6), omega_complex(kubo_nfreq)
-    real(kind=dp)                 :: eta1, eta2, eta3
-    integer                       :: i, if, a, b, c, bc, n, m, l, ifreq, istart, iend
-    real(kind=dp)                 :: I_nm(3, 6), &
-                                     omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
-                                     eta_smr, Delta_k, arg, vdum(3), occ_fac, wstep, wmin, wmax
-    real(kind=dp)                 :: omega_nml, delta_o
-
-    allocate (UU(num_wann, num_wann))
-    allocate (AA(num_wann, num_wann, 3))
-    allocate (AA_bar(num_wann, num_wann, 3))
-    allocate (AA_da(num_wann, num_wann, 3, 3))
-    allocate (AA_da_bar(num_wann, num_wann, 3, 3))
-    allocate (HH_da(num_wann, num_wann, 3))
-    allocate (HH_da_bar(num_wann, num_wann, 3))
-    allocate (HH_dadb(num_wann, num_wann, 3, 3))
-    allocate (HH_dadb_bar(num_wann, num_wann, 3, 3))
-    allocate (HH(num_wann, num_wann))
-    allocate (D_h(num_wann, num_wann, 3))
-    allocate (eig(num_wann))
-    allocate (occ(num_wann))
-    allocate (eig_da(num_wann, 3))
-    allocate (r(num_wann, num_wann, 3))
-    allocate (omega_o(kubo_nfreq))
-
-    ! Initialize shg array at point k
-    shg_inter_k = cmplx_0
-    shg_intra_k = cmplx_0
-    shg_modi_k = cmplx_0
-
-    ! Gather W-gauge matrix objects !
-
-    ! choose the convention for the FT sums
-    if (sc_phase_conv .eq. 1) then ! use Wannier centres in the FT exponentials (so called TB convention)
-      ! get Hamiltonian and its first and second derivatives
-      ! Note that below we calculate the UU matrix--> we have to use the same UU from here on for
-      ! maintaining the gauge-covariance of the whole matrix element
-      call wham_get_eig_UU_HH_AA_sc_TB_conv(kpt, eig, UU, HH, HH_da, HH_dadb)
-      ! get position operator and its derivative
-      ! note that AA_da(:,:,a,b) \propto \sum_R exp(iRk)*iR_{b}*<0|r_{a}|R>
-      call pw90common_fourier_R_to_k_vec_dadb_TB_conv(kpt, AA_R, OO_da=AA, OO_dadb=AA_da)
-      ! get eigenvalues and their k-derivatives
-      call wham_get_eig_deleig_TB_conv(kpt, eig, eig_da, HH_da, UU)
-    elseif (sc_phase_conv .eq. 2) then ! do not use Wannier centres in the FT exponentials (usual W90 convention)
-      ! same as above
-      call wham_get_eig_UU_HH_AA_sc(kpt, eig, UU, HH, HH_da, HH_dadb)
-      call pw90common_fourier_R_to_k_vec_dadb(kpt, AA_R, OO_da=AA, OO_dadb=AA_da)
-      call wham_get_eig_deleig(kpt, eig, eig_da, HH, HH_da, UU)
-    end if
-
-    ! get electronic occupations
-    call pw90common_get_occ(eig, occ, fermi_energy_list(1))
-
-    ! get D_h (Eq. (24) WYSV06) (Mentioned that there is no imaginary terms were added to the denominator!)
-    call wham_get_D_h(HH_da, UU, eig, D_h)
-
-    ! calculate k-spacing in case of adaptive smearing
-    if (kubo_adpt_smr) Delta_k = pw90common_kmesh_spacing(berry_kmesh)
-
-    ! rotate quantities from W to H gauge (we follow wham_get_D_h for delHH_bar_i)
-    do a = 1, 3
-      ! Berry connection A
-      AA_bar(:, :, a) = utility_rotate(AA(:, :, a), UU, num_wann)
-      ! first derivative of Hamiltonian dH_da
-      HH_da_bar(:, :, a) = utility_rotate(HH_da(:, :, a), UU, num_wann)
-    enddo
-
-    ! setup for frequency-related quantities
-    omega = real(kubo_freq_list(:), dp)
-    wmin = omega(1)
-    wmax = omega(kubo_nfreq)
-    wstep = omega(2) - omega(1)
-
-    ! try to get r matrix
-    do n = 1, num_wann
-      do m = 1, num_wann
-        if (n == m) cycle
-        r(m, n, :) = AA_bar(m, n, :) + cmplx_i*D_h(m, n, :)
-      enddo
-    enddo
-
-    ! loop on initial and final bands
-    do n = 1, num_wann
-      do m = 1, num_wann
-        if (m == n) cycle
-
-        ! calculate eta_smearing
-        if (kubo_adpt_smr) then
-          ! Eq.(35) YWVS07
-          vdum(:) = eig_da(m, :) - eig_da(n, :)
-          joint_level_spacing = sqrt(dot_product(vdum(:), vdum(:)))*Delta_k/2
-          eta_smr = min(joint_level_spacing*kubo_adpt_smr_fac, &
-                        kubo_adpt_smr_max)
-        else
-          eta_smr = kubo_smr_fixed_en_width
-        endif
-        eta1 = eta_smr
-        ! calculate the complex omega
-        omega_complex = omega + cmplx_i*eta_smr
-
-        do l = 1, num_wann
-          if (l == n) cycle
-          if (l == m) cycle
-          
-          !! calculate eta2 eta3
-          if (kubo_adpt_smr) then
-            vdum(:) = eig_da(m, :) - eig_da(l, :)
-            joint_level_spacing = sqrt(dot_product(vdum(:), vdum(:)))*Delta_k/2
-            eta2 = min(joint_level_spacing*kubo_adpt_smr_fac, &
-                        kubo_adpt_smr_max)
-          else
-            eta2 = kubo_smr_fixed_en_width
-          endif
-
-          if (kubo_adpt_smr) then
-            vdum(:) = eig_da(l, :) - eig_da(n, :)
-            joint_level_spacing = sqrt(dot_product(vdum(:), vdum(:)))*Delta_k/2
-            eta3 = min(joint_level_spacing*kubo_adpt_smr_fac, &
-                        kubo_adpt_smr_max)
-          else
-            eta3 = kubo_smr_fixed_en_width
-          endif
-
-          !! we divide the intra-band contribution into three parts: omega_nml, r_cubic and omega_o
-          ! r_cubic (we always caculate them, as it applies to multiple cases)
-          do a = 1, 3
-            do bc = 1, 6
-              b = alpha_S(bc)
-              c = beta_S(bc)
-              r_cubic(a, bc) = r(n, m, a)*(r(m, l, b)*r(l, n, c) + r(m, l, c)*r(l, n, b))
-            enddo ! bc
-          enddo ! a
-          if (abs(2*eig(l) - eig(n) - eig(m)) > 1.0e-7_dp) then
-          ! omega_o
-            do ifreq = 1, kubo_nfreq
-            omega_o(ifreq) = 2*(occ(n) - occ(m))/(eig(m) - eig(n) - 2*omega(ifreq) - cmplx_i*eta1) &
-                             + (occ(m) - occ(l))/(eig(m) - eig(l) - omega(ifreq) - cmplx_i*eta2) &
-                             + (occ(l) - occ(n))/(eig(l) - eig(n) - omega(ifreq) - cmplx_i*eta3)
-            enddo ! ifreq
-          ! omega_nml
-            omega_nml = 1/(2*eig(l) - eig(n) - eig(m))
-            !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_inter_k(:, :, :), 18)
-            do a = 1, 3
-              do bc = 1, 6
-                do ifreq = 1, kubo_nfreq
-                  shg_inter_k(a, bc, ifreq) = shg_inter_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-                enddo
-              enddo
-            enddo
-          endif
-
-          !! we devide the inter-band contribution into 
-          !!   1. inter-band-i: omega_nml, r_cubic and omega_o
-          ! r_cubic
-          ! same as intra-band: r_cubic
-          ! omega_nml
-          omega_nml = eig(m) - eig(n)
-          ! omega_o 
-          if (abs(omega(l) - omega(n)) > 1.0e-7_dp) then
-            do ifreq = 1, kubo_nfreq
-              omega_o(ifreq) = (occ(n) - occ(l))/(omega(l) - omega(n))**2/(omega(l) - omega(n) - omega_complex(ifreq))
-            enddo ! ifreq
-            !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_intra_k(:, :, :), 18)
-            do a = 1, 3
-              do bc = 1, 6
-                do ifreq = 1, kubo_nfreq
-                  shg_intra_k(a, bc, ifreq) = shg_intra_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-                enddo
-              enddo
-            enddo
-          endif
-          if (abs(omega(m) - omega(l)) > 1.0e-7_dp) then
-            do ifreq = 1, kubo_nfreq
-              omega_o(ifreq) = -(occ(l) - occ(m))/(omega(m) - omega(l))**2/(omega(m) - omega(l) - omega_complex(ifreq))
-            enddo ! ifreq
-            !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_intra_k(:, :, :), 18)
-            do a = 1, 3
-              do bc = 1, 6
-                do ifreq = 1, kubo_nfreq
-                  shg_intra_k(a, bc, ifreq) = shg_intra_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-                enddo
-              enddo
-            enddo
-          endif
-
-          !!   3. inter-band-iii: r_cubic, omega_nml and omega_o
-          ! r_cubic
-          ! same as intra-band: r_cubic
-          ! omega_nml
-          omega_nml = 2*(occ(n) - occ(m))*(omega(m) + omega(n) - 2*omega(l))
-          ! omega_o
-          if (abs(omega(m) - omega(n)) > 1.0e-7_dp) then
-            do ifreq = 1, kubo_nfreq
-              omega_o(ifreq) = 1/(omega(m) - omega(n))**2/(omega(m) - omega(n) - 2*omega_complex(ifreq))
-            enddo ! ifreq
-            !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_intra_k(:, :, :), 18)
-            do a = 1, 3
-              do bc = 1, 6
-                do ifreq = 1, kubo_nfreq
-                  shg_intra_k(a, bc, ifreq) = shg_intra_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-                enddo
-              enddo
-            enddo
-          endif
-
-          !!   4. modified-i: r_cubic, omega_nml and omega_o
-          if (abs(omega(m) - omega(n)) > 1.0e-7_dp) then
-          ! r_cubic
-            do a = 1, 3
-              do bc = 1, 6
-                b = alpha_S(bc)
-                c = beta_S(bc)
-                r_cubic(a, bc) = ((eig(n) - eig(l))*r(l, m, a)*(r(m, n, b)*r(n, l, c) + r(m, n, c)*r(n, l, b)) - &
-                                  (eig(l) - eig(m))*r(n, l, a)*(r(l, m, b)*r(m, n, c) + r(l, m, c)*r(m, n, b)))*cmplx_i
-              enddo
-            enddo
-          ! omega_nml
-            omega_nml = (occ(n) - occ(m))*0.5_dp/(omega(m) - omega(n))**2
-          ! omega_o
-            do ifreq = 1, kubo_nfreq
-              omega_o(ifreq) = 1/(omega(m) - omega(n) - omega_complex(ifreq))
-            enddo
-            !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_modi_k(:, :, :), 18)
-            do a = 1, 3
-              do bc = 1, 6
-                do ifreq = 1, kubo_nfreq
-                  shg_modi_k(a, bc, ifreq) = shg_modi_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-                enddo
-              enddo
-            enddo
-          endif
-
-        enddo ! l
-
-        !!   5. modified-ii: r_cubic, omega_nml and omega_o
-        if (abs(omega(m) - omega(n)) > 1.0e-7_dp) then
-        ! r_cubic
-          do a = 1, 3
-            do bc = 1, 6
-              b = alpha_S(bc)
-              c = beta_S(bc)
-              r_cubic(a, bc) = ((eig_da(n, a) - eig_da(m, a))*(r(m, n, b)*r(n, m, c) + &
-                                                               r(m, n, c)*r(n, m, b)))*cmplx_i
-            enddo ! bc
-          enddo ! a
-        ! omega_nml
-          omega_nml = (occ(n) - occ(m))*0.5_dp/(omega(m) - omega(n))**2
-        ! omega_o
-          do ifreq = 1, kubo_nfreq
-            omega_o(ifreq) = 1/(omega(m) - omega(n) - omega_complex(ifreq))
-          enddo
-          !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_modi_k(:, :, :), 18)
-          do a = 1, 3
-            do bc = 1, 6
-              do ifreq = 1, kubo_nfreq
-                shg_modi_k(a, bc, ifreq) = shg_modi_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-              enddo
-            enddo
-          enddo
-        endif
-
-        !!   2. inter-band-ii: r_cubic, omega_nml and omega_o
-        if (abs(omega(m) - omega(n)) > 1.0e-7_dp) then
-        ! r_cubic
-          do a = 1, 3
-            do bc = 1, 6
-              b = alpha_S(bc)
-              c = beta_S(bc)
-              r_cubic(a, bc) = ((eig_da(m, b) - eig_da(n, b))*r(m, n, c) + &
-                                (eig_da(m, c) - eig_da(n, c))*r(m, n, b))*r(n, m, a)*cmplx_i
-            enddo ! bc
-          enddo ! a
-        ! omega_nml
-          omega_nml = -(occ(n) - occ(m))*8_dp/(omega(m) - omega(n))**2
-        ! omega_o
-          do ifreq = 1, kubo_nfreq
-            omega_o(ifreq) = 1/(omega(m) - omega(n) - 2*omega_complex(ifreq))
-          enddo ! ifreq
-          !call ZGERU(18, kubo_nfreq, omega_nml, r_cubic, 1, omega_o, 1, shg_inter_k(:, :, :), 18)
-          do a = 1, 3
-            do bc = 1, 6
-              do ifreq = 1, kubo_nfreq
-                shg_inter_k(a, bc, ifreq) = shg_inter_k(a, bc, ifreq) + omega_nml*r_cubic(a, bc)*omega_o(ifreq)
-              enddo
-            enddo
-          enddo
-        endif
-
-      enddo ! m
-    enddo ! n
-
-  end subroutine berry_get_shg_k
-          
 
   subroutine berry_print_progress(loop_k, start_k, end_k, step_k)
     !============================================================!
